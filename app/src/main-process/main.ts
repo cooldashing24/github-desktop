@@ -54,6 +54,7 @@ import {
 import { initializeDesktopNotifications } from './notifications'
 import parseCommandLineArgs from 'minimist'
 import { CLIAction } from '../lib/cli-action'
+import { getConfirmRevealDirectoryOptions } from './reveal-directory-dialog'
 
 app.setAppLogsPath()
 enableSourceMaps()
@@ -669,17 +670,7 @@ app.on('ready', () => {
   )
   ipcMain.handle('confirm-reveal-directory', async event => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    const options: Electron.MessageBoxOptions = {
-      type: 'warning',
-      title: 'Reveal Repository in Finder?',
-      message: 'This repository might be an application.',
-      detail:
-        'Opening it directly could run software. You can reveal and select it in Finder without opening it.',
-      buttons: ['Reveal in Finder', 'Cancel'],
-      defaultId: 1,
-      cancelId: 1,
-      noLink: true,
-    }
+    const options = getConfirmRevealDirectoryOptions()
     const result =
       window === null
         ? await dialog.showMessageBox(options)
