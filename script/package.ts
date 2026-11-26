@@ -25,6 +25,7 @@ import { computeBundleHashSync } from '../app/src/lib/compute-bundle-hash'
 import { rename } from 'fs/promises'
 import { join } from 'path'
 import { assertNonNullable } from '../app/src/lib/fatal-error'
+import { buildLinuxDeb } from './linux-deb'
 
 const distPath = getDistPath()
 const productName = getProductName()
@@ -40,24 +41,33 @@ if (process.platform === 'darwin') {
   packageOSX()
 } else if (process.platform === 'win32') {
   packageWindows()
+} else if (process.platform === 'linux') {
+  packageLinux()
 } else {
   console.error(`I don't know how to package for ${process.platform} :(`)
   process.exit(1)
 }
 
-console.log('Writing bundle size info…')
-writeFileSync(
-  path.join(getDistRoot(), 'bundle-size.json'),
-  JSON.stringify(getBundleSizes())
-)
+const outDir = path.join(__dirname, '..', 'out')
+if (existsSync(outDir)) {
+  console.log('Writing bundle size info…')
+  writeFileSync(
+    path.join(getDistRoot(), 'bundle-size.json'),
+    JSON.stringify(getBundleSizes())
+  )
 
-console.log('Writing bundle hash…')
-writeFileSync(
-  path.join(getDistRoot(), 'bundle-hash.json'),
-  JSON.stringify({
-    bundleHash: computeBundleHashSync(path.join(__dirname, '..', 'out')),
-  })
-)
+  console.log('Writing bundle hash…')
+  writeFileSync(
+    path.join(getDistRoot(), 'bundle-hash.json'),
+    JSON.stringify({
+      bundleHash: computeBundleHashSync(outDir),
+    })
+  )
+} else {
+  console.log(
+    `Skipping bundle size and hash info (${outDir} does not exist)…`
+  )
+}
 
 function packageOSX() {
   const dest = getOSXZipPath()
@@ -67,6 +77,27 @@ function packageOSX() {
   cp.execSync(
     `ditto -ck --keepParent "${distPath}/${productName}.app" "${dest}"`
   )
+}
+
+function packageLinux() {
+  const iconPath = join(
+    __dirname,
+    '..',
+    'app',
+    'static',
+    'linux',
+    'icon-logo.png'
+  )
+
+  console.log('Packaging for Linux…')
+  const result = buildLinuxDeb({
+    distDir: distPath,
+    outputDir,
+    version: getVersion(),
+    arch: getDistArchitecture(),
+    iconPath,
+  })
+  console.log(`Created ${result.debPath}`)
 }
 
 function packageWindows() {
