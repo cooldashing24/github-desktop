@@ -32,6 +32,7 @@ function getBinaryPath(): string {
 
 /**
  * Determine Electron launch arguments for unpackaged local dev runs.
+ *
  * On Ubuntu 24.04+, `kernel.apparmor_restrict_unprivileged_userns = 1` blocks
  * Electron's unprivileged user-namespace sandbox unless an installed AppArmor
  * profile covers the executable path.
@@ -56,6 +57,11 @@ export function getLaunchArgs(
   return []
 }
 
+/**
+ * Spawn the built Desktop binary in development mode if it exists.
+ *
+ * Returns `null` when the target binary has not been built yet.
+ */
 export function run(spawnOptions: SpawnOptions) {
   const binaryPath = getBinaryPath()
 

@@ -48,26 +48,19 @@ if (process.platform === 'darwin') {
   process.exit(1)
 }
 
-const outDir = path.join(__dirname, '..', 'out')
-if (existsSync(outDir)) {
-  console.log('Writing bundle size info…')
-  writeFileSync(
-    path.join(getDistRoot(), 'bundle-size.json'),
-    JSON.stringify(getBundleSizes())
-  )
+console.log('Writing bundle size info…')
+writeFileSync(
+  path.join(getDistRoot(), 'bundle-size.json'),
+  JSON.stringify(getBundleSizes())
+)
 
-  console.log('Writing bundle hash…')
-  writeFileSync(
-    path.join(getDistRoot(), 'bundle-hash.json'),
-    JSON.stringify({
-      bundleHash: computeBundleHashSync(outDir),
-    })
-  )
-} else {
-  console.log(
-    `Skipping bundle size and hash info (${outDir} does not exist)…`
-  )
-}
+console.log('Writing bundle hash…')
+writeFileSync(
+  path.join(getDistRoot(), 'bundle-hash.json'),
+  JSON.stringify({
+    bundleHash: computeBundleHashSync(path.join(__dirname, '..', 'out')),
+  })
+)
 
 function packageOSX() {
   const dest = getOSXZipPath()

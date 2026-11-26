@@ -26,7 +26,7 @@ function setPlatformGlobals(
 }
 
 describe('getConfirmRevealDirectoryOptions', () => {
-  it('uses File Manager wording on Linux', t => {
+  it('uses File Manager wording on Linux', async t => {
     setPlatformGlobals(t, { linux: true })
 
     assert.deepStrictEqual(getConfirmRevealDirectoryOptions(), {
@@ -42,7 +42,7 @@ describe('getConfirmRevealDirectoryOptions', () => {
     })
   })
 
-  it('preserves Finder wording on macOS', t => {
+  it('preserves Finder wording on macOS', async t => {
     setPlatformGlobals(t, { darwin: true })
 
     assert.deepStrictEqual(getConfirmRevealDirectoryOptions(), {
@@ -58,7 +58,7 @@ describe('getConfirmRevealDirectoryOptions', () => {
     })
   })
 
-  it('uses Explorer wording on Windows', t => {
+  it('uses Explorer wording on Windows', async t => {
     setPlatformGlobals(t, { win32: true })
 
     assert.deepStrictEqual(getConfirmRevealDirectoryOptions(), {

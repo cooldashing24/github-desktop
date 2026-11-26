@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  readFile,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { describe, it } from 'node:test'
 import { promisify } from 'node:util'
@@ -15,15 +22,18 @@ import {
 const execFileP = promisify(execFile)
 
 describe('linux deb version and naming', () => {
-  it('normalizes semver pre-release tags to Debian tilde syntax', () => {
+  it('normalizes semver pre-release tags to Debian tilde syntax', async () => {
     assert.equal(toDebianVersion('3.7.1-beta1'), '3.7.1~beta1')
     assert.equal(toDebianVersion('3.7.1-test.2'), '3.7.1~test.2')
     assert.equal(toDebianVersion('3.7.1'), '3.7.1')
   })
 
-  it('maps Electron architectures to Debian package names', () => {
+  it('maps x64 to amd64 and rejects unsupported architectures', async () => {
     assert.equal(toDebianArch('x64'), 'amd64')
-    assert.equal(toDebianArch('arm64'), 'arm64')
+    assert.throws(
+      () => toDebianArch('arm64'),
+      /Unsupported Linux Debian package architecture/
+    )
     assert.equal(
       getLinuxDebFileName('3.7.1-beta1', 'x64'),
       'github-desktop_3.7.1~beta1_amd64.deb'
@@ -32,14 +42,17 @@ describe('linux deb version and naming', () => {
 })
 
 describe('buildLinuxDeb', { skip: process.platform !== 'linux' }, () => {
-  it('builds an installable .deb with FHS layout, OAuth desktop schemes, AppArmor profile, and t64 deps', async t => {
+  it('builds an installable .deb with FHS layout, CLI wrapper routing, OAuth desktop schemes, AppArmor profile, and t64 deps', async t => {
     const root = await createTempDirectory(t)
     const distDir = join(root, 'desktop-linux-x64')
     const outputDir = join(root, 'out-debs')
     const extractDir = join(root, 'extracted')
 
     await mkdir(join(distDir, 'resources', 'app'), { recursive: true })
-    await writeFile(join(distDir, 'desktop'), '#!/bin/sh\necho desktop\n')
+    await writeFile(
+      join(distDir, 'desktop'),
+      '#!/bin/sh\nprintf "DESKTOP|node=%s|args=%s\\n" "${ELECTRON_RUN_AS_NODE:-}" "$*"\n'
+    )
     await chmod(join(distDir, 'desktop'), 0o755)
     await writeFile(join(distDir, 'chrome-sandbox'), 'sandbox')
     await chmod(join(distDir, 'chrome-sandbox'), 0o755)
@@ -96,7 +109,11 @@ describe('buildLinuxDeb', { skip: process.platform !== 'linux' }, () => {
     assert.match(contents, /\.\/usr\/lib\/github-desktop\/desktop/)
     assert.match(
       contents,
-      /\.\/usr\/bin\/github-desktop -> \/usr\/lib\/github-desktop\/desktop/
+      /\.\/usr\/lib\/github-desktop\/resources\/app\/static\/github\.sh/
+    )
+    assert.match(
+      contents,
+      /\.\/usr\/bin\/github-desktop -> \/usr\/lib\/github-desktop\/resources\/app\/static\/github\.sh/
     )
     assert.match(
       contents,
@@ -111,6 +128,81 @@ describe('buildLinuxDeb', { skip: process.platform !== 'linux' }, () => {
     await mkdir(extractDir, { recursive: true })
     await execFileP('dpkg-deb', ['-x', result.debPath, extractDir])
 
+    const extractedWrapperPath = join(
+      extractDir,
+      'usr',
+      'lib',
+      'github-desktop',
+      'resources',
+      'app',
+      'static',
+      'github.sh'
+    )
+    const extractedWrapperStat = await stat(extractedWrapperPath)
+    assert.equal(extractedWrapperStat.mode & 0o755, 0o755)
+
+    const symlinkLauncherPath = join(root, 'github-desktop-symlink')
+    await symlink(extractedWrapperPath, symlinkLauncherPath)
+
+    // Verify github.sh resolves symlinks via readlink -f, routes CLI arguments
+    // via ELECTRON_RUN_AS_NODE=1, and passes x-github-* / --cli-* directly to
+    // the desktop binary.
+    const { stdout: cliInvocation } = await execFileP(
+      symlinkLauncherPath,
+      ['open', '/tmp/my-repo'],
+      { encoding: 'utf8' }
+    )
+    assert.equal(
+      cliInvocation.trim(),
+      `DESKTOP|node=1|args=${join(
+        extractDir,
+        'usr',
+        'lib',
+        'github-desktop',
+        'resources',
+        'app',
+        'cli.js'
+      )} open /tmp/my-repo`
+    )
+
+    const { stdout: noArgInvocation } = await execFileP(
+      symlinkLauncherPath,
+      [],
+      { encoding: 'utf8' }
+    )
+    assert.equal(
+      noArgInvocation.trim(),
+      `DESKTOP|node=1|args=${join(
+        extractDir,
+        'usr',
+        'lib',
+        'github-desktop',
+        'resources',
+        'app',
+        'cli.js'
+      )}`
+    )
+
+    const { stdout: urlInvocation } = await execFileP(
+      symlinkLauncherPath,
+      ['x-github-client://openRepo/https://github.com/desktop/desktop'],
+      { encoding: 'utf8' }
+    )
+    assert.equal(
+      urlInvocation.trim(),
+      'DESKTOP|node=|args=x-github-client://openRepo/https://github.com/desktop/desktop'
+    )
+
+    const { stdout: cliFlagInvocation } = await execFileP(
+      symlinkLauncherPath,
+      ['--cli-open=/tmp/my-repo'],
+      { encoding: 'utf8' }
+    )
+    assert.equal(
+      cliFlagInvocation.trim(),
+      'DESKTOP|node=|args=--cli-open=/tmp/my-repo'
+    )
+
     const desktopEntry = await readFile(
       join(
         extractDir,
@@ -121,10 +213,7 @@ describe('buildLinuxDeb', { skip: process.platform !== 'linux' }, () => {
       ),
       'utf8'
     )
-    assert.match(
-      desktopEntry,
-      /^Exec=\/usr\/lib\/github-desktop\/desktop %u$/m
-    )
+    assert.match(desktopEntry, /^Exec=\/usr\/lib\/github-desktop\/desktop %u$/m)
     assert.match(
       desktopEntry,
       /^MimeType=x-scheme-handler\/x-github-client;x-scheme-handler\/x-github-desktop-auth;x-scheme-handler\/x-github-desktop-dev-auth;$/m

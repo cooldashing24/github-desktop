@@ -14,15 +14,38 @@ import {
   writeFileSync,
 } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { DesktopPackageArch } from './packager-options'
 
+/**
+ * Debian package name for GitHub Desktop.
+ *
+ * Used for the `.deb` filename, control metadata, and install paths.
+ */
 export const linuxDebPackageName = 'github-desktop'
+
+/**
+ * Debian package maintainer metadata string.
+ *
+ * Identifies the fork maintainer in `DEBIAN/control`.
+ */
 export const linuxDebMaintainer =
   'cooldashing24 <cooldashing24@users.noreply.github.com>'
+
+/**
+ * Upstream fork homepage URL for the Debian package.
+ *
+ * Included in `DEBIAN/control` `Homepage` metadata.
+ */
 export const linuxDebHomepage =
   'https://github.com/cooldashing24/github-desktop'
 
+/**
+ * Runtime Debian package dependencies for Ubuntu 24.04+.
+ *
+ * Includes `t64` library alternatives compatible with Ubuntu 24.04 alongside
+ * fallback package names.
+ */
 export const linuxDebDepends: ReadonlyArray<string> = [
   'libgtk-3-0t64 | libgtk-3-0',
   'libasound2t64 | libasound2',
@@ -38,12 +61,23 @@ export const linuxDebDepends: ReadonlyArray<string> = [
   'xdg-utils',
 ]
 
+/**
+ * Custom URI schemes registered in the `.desktop` entry.
+ *
+ * Routes OAuth callbacks and "Open in GitHub Desktop" links into the app.
+ */
 export const linuxDebMimeTypes: ReadonlyArray<string> = [
   'x-scheme-handler/x-github-client',
   'x-scheme-handler/x-github-desktop-auth',
   'x-scheme-handler/x-github-desktop-dev-auth',
 ]
 
+/**
+ * Inputs required to build a native `.deb` package on Linux.
+ *
+ * Specifies the packaged distribution directory, output directory, version,
+ * architecture, and application icon path.
+ */
 export interface ILinuxDebPackageOptions {
   readonly distDir: string
   readonly outputDir: string
@@ -52,17 +86,23 @@ export interface ILinuxDebPackageOptions {
   readonly iconPath: string
 }
 
+/**
+ * Metadata describing a generated `.deb` package artifact.
+ *
+ * Returned by `buildLinuxDeb` after `dpkg-deb --build` succeeds.
+ */
 export interface ILinuxDebPackageResult {
   readonly debPath: string
   readonly debVersion: string
-  readonly debArch: 'amd64' | 'arm64'
+  readonly debArch: 'amd64'
   readonly packageName: string
 }
 
 /**
- * Normalize semver pre-release tags to Debian `~` syntax (for example,
- * `3.7.1-beta1` becomes `3.7.1~beta1`) so pre-releases sort lower than final
- * releases.
+ * Normalize semver pre-release tags to Debian `~` syntax.
+ *
+ * Converts tags such as `3.7.1-beta1` to `3.7.1~beta1` so pre-releases sort
+ * lower than final releases in `dpkg` version comparisons.
  */
 export function toDebianVersion(version: string): string {
   const trimmed = version.trim()
@@ -73,12 +113,28 @@ export function toDebianVersion(version: string): string {
   return trimmed.replace(/^(\d+\.\d+\.\d+)-/, '$1~')
 }
 
-/** Map Electron packager architectures to Debian architecture names. */
-export function toDebianArch(arch: DesktopPackageArch): 'amd64' | 'arm64' {
-  return arch === 'arm64' ? 'arm64' : 'amd64'
+/**
+ * Map Electron packager architectures to Debian architecture names.
+ *
+ * Only `x64` (`amd64`) is supported; throws clearly for unsupported
+ * architectures.
+ */
+export function toDebianArch(arch: DesktopPackageArch): 'amd64' {
+  if (arch !== 'x64') {
+    throw new Error(
+      `Unsupported Linux Debian package architecture: '${arch}' (only 'x64' is supported)`
+    )
+  }
+
+  return 'amd64'
 }
 
-/** Build the Debian package filename for the given version and arch. */
+/**
+ * Build the Debian package filename for the given version and arch.
+ *
+ * Combines `linuxDebPackageName`, the normalized Debian version, and the
+ * Debian architecture name.
+ */
 export function getLinuxDebFileName(
   version: string,
   arch: DesktopPackageArch
@@ -122,6 +178,17 @@ function getAppArmorProfileContent(): string {
   ].join('\n')
 }
 
+function getDesktopCacheRefreshLines(): ReadonlyArray<string> {
+  return [
+    '    if command -v update-desktop-database >/dev/null 2>&1; then',
+    '      update-desktop-database -q /usr/share/applications || true',
+    '    fi',
+    '    if command -v gtk-update-icon-cache >/dev/null 2>&1; then',
+    '      gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true',
+    '    fi',
+  ]
+}
+
 function getPostinstScript(): string {
   return [
     '#!/bin/sh',
@@ -153,12 +220,7 @@ function getPostinstScript(): string {
     '      chmod 4755 "$SANDBOX_BIN" || true',
     '    fi',
     '',
-    '    if command -v update-desktop-database >/dev/null 2>&1; then',
-    '      update-desktop-database -q /usr/share/applications || true',
-    '    fi',
-    '    if command -v gtk-update-icon-cache >/dev/null 2>&1; then',
-    '      gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true',
-    '    fi',
+    ...getDesktopCacheRefreshLines(),
     '    ;;',
     'esac',
     '',
@@ -190,12 +252,7 @@ function getPostrmScript(): string {
     '      rm -f "$LOCAL_PROFILE"',
     '    fi',
     '',
-    '    if command -v update-desktop-database >/dev/null 2>&1; then',
-    '      update-desktop-database -q /usr/share/applications || true',
-    '    fi',
-    '    if command -v gtk-update-icon-cache >/dev/null 2>&1; then',
-    '      gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true',
-    '    fi',
+    ...getDesktopCacheRefreshLines(),
     '    ;;',
     'esac',
     '',
@@ -206,7 +263,7 @@ function getPostrmScript(): string {
 
 function getControlFileContent(
   debVersion: string,
-  debArch: 'amd64' | 'arm64',
+  debArch: 'amd64',
   installedSizeKiB: number
 ): string {
   return [
@@ -254,8 +311,11 @@ function makeDirsWithMode(root: string, relativePaths: ReadonlyArray<string>) {
 }
 
 /**
- * Package a built Linux distribution directory into a native `.deb` using
- * `fakeroot` and `dpkg-deb`.
+ * Package a built Linux distribution directory into a native `.deb`.
+ *
+ * Stages FHS paths, `/usr/bin/github-desktop` CLI wrapper symlink, `.desktop`
+ * URI schemes, AppArmor profile, and maintainer scripts, then builds the
+ * package using `fakeroot` and `dpkg-deb`.
  */
 export function buildLinuxDeb(
   options: ILinuxDebPackageOptions
@@ -313,8 +373,32 @@ export function buildLinuxDeb(
       chmodSync(sandboxPath, 0o755)
     }
 
+    const cliWrapperDest = join(
+      appInstallDir,
+      'resources',
+      'app',
+      'static',
+      'github.sh'
+    )
+    if (!existsSync(cliWrapperDest)) {
+      const repoCliWrapper = join(
+        __dirname,
+        '..',
+        'app',
+        'static',
+        'linux',
+        'github.sh'
+      )
+      if (!existsSync(repoCliWrapper)) {
+        throw new Error(`Expected Linux CLI wrapper at: ${repoCliWrapper}`)
+      }
+      mkdirSync(dirname(cliWrapperDest), { recursive: true })
+      cpSync(repoCliWrapper, cliWrapperDest)
+    }
+    chmodSync(cliWrapperDest, 0o755)
+
     symlinkSync(
-      '/usr/lib/github-desktop/desktop',
+      '/usr/lib/github-desktop/resources/app/static/github.sh',
       join(stagingDir, 'usr', 'bin', 'github-desktop')
     )
 
@@ -341,12 +425,7 @@ export function buildLinuxDeb(
     writeFileSync(desktopDest, getDesktopEntryContent(), 'utf8')
     chmodSync(desktopDest, 0o644)
 
-    const apparmorDest = join(
-      stagingDir,
-      'etc',
-      'apparmor.d',
-      'github-desktop'
-    )
+    const apparmorDest = join(stagingDir, 'etc', 'apparmor.d', 'github-desktop')
     writeFileSync(apparmorDest, getAppArmorProfileContent(), 'utf8')
     chmodSync(apparmorDest, 0o644)
 

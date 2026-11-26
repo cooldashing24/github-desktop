@@ -42,8 +42,6 @@ function createHarness(overrides: Partial<ICLIDependencies> = {}) {
   const spawnCalls: Array<ISpawnCall> = []
   const execFileCalls: Array<IExecFileCall> = []
   const stderrChunks: Array<string> = []
-  const errorLogs: Array<ReadonlyArray<unknown>> = []
-  const exitCodes: Array<number | null> = []
   const env: NodeJS.ProcessEnv = { ELECTRON_RUN_AS_NODE: '1' }
 
   const deps: ICLIDependencies = {
@@ -69,12 +67,6 @@ function createHarness(overrides: Partial<ICLIDependencies> = {}) {
     exit: code => {
       throw new MockExitError(code)
     },
-    setExitCode: code => {
-      exitCodes.push(code)
-    },
-    logError: (...data) => {
-      errorLogs.push(data)
-    },
     ...overrides,
   }
 
@@ -84,14 +76,12 @@ function createHarness(overrides: Partial<ICLIDependencies> = {}) {
     spawnCalls,
     execFileCalls,
     stderrChunks,
-    errorLogs,
-    exitCodes,
   }
 }
 
 describe('CLI entrypoint', () => {
   describe('linux', () => {
-    it('spawns the Linux desktop binary detached with current working directory when given no args', () => {
+    it('spawns the Linux desktop binary detached with current working directory when given no args', async () => {
       const { deps, env, spawnCalls } = createHarness()
 
       runCLI([], deps)
@@ -112,7 +102,7 @@ describe('CLI entrypoint', () => {
       assert.strictEqual(spawnCalls[0].child.unrefCalled, true)
     })
 
-    it('spawns with --cli-open for a relative or absolute directory path', () => {
+    it('spawns with --cli-open for a relative or absolute directory path', async () => {
       const relative = createHarness()
       runCLI(['my-repo'], relative.deps)
       assert.deepStrictEqual(relative.spawnCalls[0].args, [
@@ -126,7 +116,7 @@ describe('CLI entrypoint', () => {
       ])
     })
 
-    it('spawns with --cli-open for open [path]', () => {
+    it('spawns with --cli-open for open [path]', async () => {
       const noPath = createHarness()
       runCLI(['open'], noPath.deps)
       assert.deepStrictEqual(noPath.spawnCalls[0].args, [
@@ -140,7 +130,7 @@ describe('CLI entrypoint', () => {
       ])
     })
 
-    it('spawns with --cli-clone and optional --cli-branch for clone commands', () => {
+    it('spawns with --cli-clone and optional --cli-branch for clone commands', async () => {
       const slug = createHarness()
       runCLI(['clone', 'torvalds/linux'], slug.deps)
       assert.deepStrictEqual(slug.spawnCalls[0].args, [
@@ -158,7 +148,7 @@ describe('CLI entrypoint', () => {
       ])
     })
 
-    it('prints usage and exits with code 1 when clone has no URL', () => {
+    it('prints usage and exits with code 1 when clone has no URL', async () => {
       const { deps, spawnCalls, stderrChunks } = createHarness()
 
       assert.throws(
@@ -169,7 +159,7 @@ describe('CLI entrypoint', () => {
       assert.match(stderrChunks.join(''), /GitHub Desktop CLI usage/)
     })
 
-    it('prints usage and exits with code 0 for --help, -h, and help', () => {
+    it('prints usage and exits with code 0 for --help, -h, and help', async () => {
       for (const helpArgs of [['--help'], ['-h'], ['help']]) {
         const { deps, spawnCalls, stderrChunks } = createHarness()
         assert.throws(
@@ -181,25 +171,35 @@ describe('CLI entrypoint', () => {
       }
     })
 
-    it('propagates child exit code and handles spawn errors', () => {
-      const { deps, spawnCalls, exitCodes, errorLogs } = createHarness()
+    it('propagates child exit code and handles spawn errors', async t => {
+      const previousExitCode = process.exitCode
+      t.after(() => {
+        process.exitCode = previousExitCode
+      })
+
+      const { deps, spawnCalls, stderrChunks } = createHarness()
       runCLI(['/opt/repos/desktop'], deps)
 
       const { child } = spawnCalls[0]
       child.emit('exit', 42)
-      assert.deepStrictEqual(exitCodes, [42])
+      assert.strictEqual(process.exitCode, 42)
 
       const spawnErr = Object.assign(new Error('ENOENT'), { code: 127 })
       assert.throws(
         () => child.emit('error', spawnErr),
         err => err instanceof MockExitError && err.code === 127
       )
-      assert.strictEqual(errorLogs.length, 2)
+      const stderrOutput = stderrChunks.join('')
+      assert.match(
+        stderrOutput,
+        /Error running command --cli-open=\/opt\/repos\/desktop/
+      )
+      assert.match(stderrOutput, /Error: ENOENT/)
     })
   })
 
   describe('darwin and win32 regressions', () => {
-    it('keeps macOS open invocation unchanged', () => {
+    it('keeps macOS open invocation unchanged', async () => {
       const { deps, execFileCalls, spawnCalls } = createHarness({
         platform: 'darwin',
         cliDir: '/Applications/GitHub Desktop.app/Contents/Resources/app',
@@ -218,7 +218,7 @@ describe('CLI entrypoint', () => {
       ])
     })
 
-    it('keeps Windows detached spawn unchanged in production and dev', () => {
+    it('keeps Windows detached spawn unchanged in production and dev', async () => {
       const prod = createHarness({
         platform: 'win32',
         cliDir: '/app/resources/app',
@@ -246,7 +246,7 @@ describe('CLI entrypoint', () => {
       )
     })
 
-    it('throws Unsupported platform on unknown platforms', () => {
+    it('throws Unsupported platform on unknown platforms', async () => {
       const { deps } = createHarness({ platform: 'freebsd' })
 
       assert.throws(() => runCLI([], deps), /Unsupported platform/)

@@ -9,10 +9,15 @@ interface ILinuxExternalEditor {
   readonly name: string
 
   /** List of possible paths where the editor's executable might be located. */
-  readonly paths: string[]
+  readonly paths: readonly string[]
 }
 
-/** Optional dependencies for Linux external editor discovery. */
+/**
+ * Optional dependencies for Linux external editor discovery.
+ *
+ * Exposed so unit tests can inject a deterministic home directory and path
+ * existence predicate without mutating global state.
+ */
 export interface ILinuxEditorLookupDependencies {
   readonly homeDir?: string
   readonly pathExists?: (path: string) => Promise<boolean>
@@ -234,7 +239,7 @@ function resolveEditorPath(editorPath: string, homeDir: string): string {
 }
 
 async function getAvailablePath(
-  paths: string[],
+  paths: readonly string[],
   homeDir: string,
   checkPathExists: (path: string) => Promise<boolean>
 ): Promise<string | null> {
@@ -248,6 +253,12 @@ async function getAvailablePath(
   return null
 }
 
+/**
+ * Discover installed external editors available on Linux.
+ *
+ * Resolves `~/` and `.local/` candidate paths against the user's home
+ * directory and returns the first existing path for each known editor.
+ */
 export async function getAvailableEditors(
   deps?: ILinuxEditorLookupDependencies
 ): Promise<ReadonlyArray<IFoundEditor<string>>> {

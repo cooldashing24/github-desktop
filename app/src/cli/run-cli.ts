@@ -2,41 +2,49 @@ import { join, resolve } from 'path'
 import parse from 'minimist'
 import { execFile, spawn } from 'child_process'
 
+/**
+ * Minimal child process handle returned by `spawn`.
+ *
+ * Exposes the lifecycle event hooks and `unref()` needed to detach the
+ * launched Desktop application from the CLI process.
+ */
 export interface ICLIChildProcess {
   on(event: 'error', listener: (err: Error) => void): this
   on(event: 'exit', listener: (code: number | null) => void): this
   unref(): void
 }
 
-export type ExecFileFn = (
-  file: string,
-  args: ReadonlyArray<string>,
-  callback: (error: unknown | null, stderr?: string) => void
-) => unknown
-
-export type SpawnFn = (
-  command: string,
-  args: ReadonlyArray<string>,
-  options: { readonly detached: boolean; readonly stdio: 'ignore' }
-) => ICLIChildProcess
-
+/**
+ * External process and environment dependencies for `runCLI`.
+ *
+ * Provides test seams for platform, working directory, environment variables,
+ * child process launching, stderr output, and exit termination.
+ */
 export interface ICLIDependencies {
   readonly platform?: NodeJS.Platform
   readonly cliDir?: string
   readonly cwd?: string
   readonly isDev?: boolean
   readonly env?: NodeJS.ProcessEnv
-  readonly execFile?: ExecFileFn
-  readonly spawn?: SpawnFn
+  readonly execFile?: (
+    file: string,
+    args: ReadonlyArray<string>,
+    callback: (error: unknown | null, stderr?: string) => void
+  ) => unknown
+  readonly spawn?: (
+    command: string,
+    args: ReadonlyArray<string>,
+    options: { readonly detached: boolean; readonly stdio: 'ignore' }
+  ) => ICLIChildProcess
   readonly stderr?: Pick<NodeJS.WriteStream, 'write'>
   readonly exit?: (code: number) => never
-  readonly setExitCode?: (code: number | null) => void
-  readonly logError?: (...data: ReadonlyArray<unknown>) => void
 }
 
 /**
- * Parse GitHub Desktop CLI arguments and launch the Desktop application for
- * the current platform.
+ * Parse GitHub Desktop CLI arguments and launch the Desktop application.
+ *
+ * Supports `open`, `clone`, `--help`/`help`, and bare path arguments across
+ * macOS, Windows, and Linux.
  */
 export function runCLI(
   argv: ReadonlyArray<string>,
@@ -51,23 +59,17 @@ export function runCLI(
   const spawnFn = deps.spawn ?? spawn
   const stderr = deps.stderr ?? process.stderr
   const exit = deps.exit ?? (code => process.exit(code))
-  const setExitCode =
-    deps.setExitCode ??
-    (code => {
-      if (code !== null) {
-        process.exitCode = code
-      }
-    })
-  const logError = deps.logError ?? console.error
 
   const launch = (...launchArgs: Array<string>) => {
-    function cb(e: unknown | null, stderrText?: string) {
-      if (e) {
-        logError(`Error running command ${launchArgs}`)
-        logError(stderrText ?? `${e}`)
+    function handleLaunchError(error: unknown | null, stderrText?: string) {
+      if (error) {
+        stderr.write(`Error running command ${launchArgs}\n`)
+        stderr.write(`${stderrText ?? error}\n`)
         exit(
-          typeof e === 'object' && 'code' in e && typeof e.code === 'number'
-            ? e.code
+          typeof error === 'object' &&
+            'code' in error &&
+            typeof error.code === 'number'
+            ? error.code
             : 1
         )
       }
@@ -78,8 +80,8 @@ export function runCLI(
         detached: true,
         stdio: 'ignore',
       })
-        .on('error', cb)
-        .on('exit', code => setExitCode(code))
+        .on('error', handleLaunchError)
+        .on('exit', code => (process.exitCode = code ?? process.exitCode))
         .unref()
     }
 
@@ -87,7 +89,7 @@ export function runCLI(
       execFileFn(
         'open',
         ['-n', join(cliDir, '../../..'), '--args', ...launchArgs],
-        cb
+        handleLaunchError
       )
     } else if (platform === 'win32') {
       const exeName = `GitHubDesktop${isDev ? '-dev' : ''}.exe`

@@ -5,15 +5,36 @@ import { existsSync } from 'fs'
 import * as os from 'os'
 import { join } from 'path'
 
+/**
+ * Target CPU architecture supported by `@electron/packager`.
+ *
+ * GitHub Desktop builds target `x64` and `arm64`.
+ */
 export type DesktopPackageArch = 'arm64' | 'x64'
+
+/**
+ * Target operating system platform supported by `@electron/packager`.
+ *
+ * GitHub Desktop builds target `darwin`, `linux`, and `win32`.
+ */
 export type DesktopPackagePlatform = 'darwin' | 'linux' | 'win32'
 
+/**
+ * macOS notarization credentials passed to `@electron/packager`.
+ *
+ * Used for publishable macOS builds in CI.
+ */
 export interface IOSXNotarizeOptions {
   readonly appleApiKey: string
   readonly appleApiKeyId: string
   readonly appleApiIssuer: string
 }
 
+/**
+ * Inputs required to construct `@electron/packager` options.
+ *
+ * Centralizes platform-specific paths, build flags, and metadata.
+ */
 export interface IPackagerOptionsContext {
   readonly platform: NodeJS.Platform
   readonly arch: string | undefined
@@ -32,6 +53,11 @@ export interface IPackagerOptionsContext {
   readonly osxNotarize?: IOSXNotarizeOptions
 }
 
+/**
+ * Validate and narrow a Node platform to a supported packager platform.
+ *
+ * Throws an error if the platform is not `win32`, `darwin`, or `linux`.
+ */
 export function toPackagePlatform(
   platform: NodeJS.Platform
 ): DesktopPackagePlatform {
@@ -43,6 +69,11 @@ export function toPackagePlatform(
   )
 }
 
+/**
+ * Resolve and validate the target CPU architecture for packaging.
+ *
+ * Defaults to `os.arch()` when `targetArch` is omitted.
+ */
 export function toPackageArch(
   targetArch: string | undefined
 ): DesktopPackageArch {
@@ -72,8 +103,10 @@ function getIconPath(context: IPackagerOptionsContext): string {
 }
 
 /**
- * Build `@electron/packager` options for the target platform without asserting
- * or bundling platform-specific assets on other platforms.
+ * Build `@electron/packager` options for the target platform.
+ *
+ * Avoids asserting or bundling platform-specific assets (such as macOS
+ * `Assets.car`) when packaging for other platforms.
  */
 export function getPackagerOptions(
   context: IPackagerOptionsContext
