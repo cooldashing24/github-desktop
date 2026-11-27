@@ -123,7 +123,7 @@ describe('buildLinuxDeb', { skip: process.platform !== 'linux' }, () => {
       contents,
       /\.\/usr\/share\/applications\/github-desktop\.desktop/
     )
-    assert.match(contents, /\.\/etc\/apparmor\.d\/github-desktop/)
+    assert.match(contents, /\.\/etc\/apparmor\.d\/github-desktop-app/)
 
     await mkdir(extractDir, { recursive: true })
     await execFileP('dpkg-deb', ['-x', result.debPath, extractDir])
@@ -220,12 +220,12 @@ describe('buildLinuxDeb', { skip: process.platform !== 'linux' }, () => {
     )
 
     const apparmorProfile = await readFile(
-      join(extractDir, 'etc', 'apparmor.d', 'github-desktop'),
+      join(extractDir, 'etc', 'apparmor.d', 'github-desktop-app'),
       'utf8'
     )
     assert.match(
       apparmorProfile,
-      /profile github-desktop \/usr\/lib\/github-desktop\/desktop flags=\(unconfined\)/
+      /profile github-desktop-app \/usr\/lib\/github-desktop\/desktop flags=\(unconfined\)/
     )
     assert.match(apparmorProfile, /\buserns,/)
 
@@ -239,7 +239,14 @@ describe('buildLinuxDeb', { skip: process.platform !== 'linux' }, () => {
       ['--info', result.debPath, 'conffiles'],
       { encoding: 'utf8' }
     )
-    assert.equal(conffiles.trim(), '/etc/apparmor.d/github-desktop')
+    assert.equal(conffiles.trim(), '/etc/apparmor.d/github-desktop-app')
+
+    const { stdout: preinst } = await execFileP(
+      'dpkg-deb',
+      ['--info', result.debPath, 'preinst'],
+      { encoding: 'utf8' }
+    )
+    assert.match(preinst, /IndexedDB\.pre-3\.7\.bak/)
 
     const { stdout: postinst } = await execFileP(
       'dpkg-deb',

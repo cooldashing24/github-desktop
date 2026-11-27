@@ -25,6 +25,15 @@ import { DesktopPackageArch } from './packager-options'
 export const linuxDebPackageName = 'github-desktop'
 
 /**
+ * AppArmor profile name and filename under `/etc/apparmor.d/`.
+ *
+ * Uses a distinct name from Ubuntu's built-in `github-desktop` profile
+ * shipped by the `apparmor` package to avoid `dpkg` file conflicts while
+ * granting `userns` to `/usr/lib/github-desktop/desktop`.
+ */
+export const linuxDebAppArmorProfileName = 'github-desktop-app'
+
+/**
  * Debian package maintainer metadata string.
  *
  * Identifies the fork maintainer in `DEBIAN/control`.
@@ -168,11 +177,11 @@ function getAppArmorProfileContent(): string {
     'abi <abi/4.0>,',
     'include <tunables/global>',
     '',
-    'profile github-desktop /usr/lib/github-desktop/desktop flags=(unconfined) {',
+    `profile ${linuxDebAppArmorProfileName} /usr/lib/github-desktop/desktop flags=(unconfined) {`,
     '  userns,',
     '',
     '  # Site-specific additions and overrides. See local/README for details.',
-    '  include if exists <local/github-desktop>',
+    `  include if exists <local/${linuxDebAppArmorProfileName}>`,
     '}',
     '',
   ].join('\n')
@@ -189,14 +198,34 @@ function getDesktopCacheRefreshLines(): ReadonlyArray<string> {
   ]
 }
 
+function getPreinstScript(): string {
+  return [
+    '#!/bin/sh',
+    'set -e',
+    '',
+    'if [ "$1" = "upgrade" ] && [ -n "${2:-}" ] && dpkg --compare-versions "$2" lt "3.7.0"; then',
+    '  if [ -n "${SUDO_USER:-}" ]; then',
+    '    user_home=$(getent passwd "$SUDO_USER" | cut -d: -f6 || true)',
+    '    config_dir="$user_home/.config/GitHub Desktop"',
+    '    if [ -d "$config_dir/IndexedDB" ] && [ ! -e "$config_dir/IndexedDB.pre-3.7.bak" ]; then',
+    '      cp -a "$config_dir/IndexedDB" "$config_dir/IndexedDB.pre-3.7.bak" || true',
+    '    fi',
+    '  fi',
+    'fi',
+    '',
+    'exit 0',
+    '',
+  ].join('\n')
+}
+
 function getPostinstScript(): string {
   return [
     '#!/bin/sh',
     'set -e',
     '',
     'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
-    'APP_PROFILE="/etc/apparmor.d/github-desktop"',
-    'LOCAL_PROFILE="/etc/apparmor.d/local/github-desktop"',
+    `APP_PROFILE="/etc/apparmor.d/${linuxDebAppArmorProfileName}"`,
+    `LOCAL_PROFILE="/etc/apparmor.d/local/${linuxDebAppArmorProfileName}"`,
     'SANDBOX_BIN="/usr/lib/github-desktop/chrome-sandbox"',
     '',
     'case "$1" in',
@@ -235,8 +264,8 @@ function getPostrmScript(): string {
     'set -e',
     '',
     'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
-    'APP_PROFILE="/etc/apparmor.d/github-desktop"',
-    'LOCAL_PROFILE="/etc/apparmor.d/local/github-desktop"',
+    `APP_PROFILE="/etc/apparmor.d/${linuxDebAppArmorProfileName}"`,
+    `LOCAL_PROFILE="/etc/apparmor.d/local/${linuxDebAppArmorProfileName}"`,
     '',
     'case "$1" in',
     '  remove|purge)',
@@ -244,7 +273,7 @@ function getPostrmScript(): string {
     '      if [ -f "$APP_PROFILE" ]; then',
     '        apparmor_parser -R "$APP_PROFILE" 2>/dev/null || true',
     '      else',
-    "        printf 'profile github-desktop {}\\n' | apparmor_parser -R 2>/dev/null || true",
+    `        printf 'profile ${linuxDebAppArmorProfileName} {}\\n' | apparmor_parser -R 2>/dev/null || true`,
     '      fi',
     '    fi',
     '',
@@ -425,7 +454,12 @@ export function buildLinuxDeb(
     writeFileSync(desktopDest, getDesktopEntryContent(), 'utf8')
     chmodSync(desktopDest, 0o644)
 
-    const apparmorDest = join(stagingDir, 'etc', 'apparmor.d', 'github-desktop')
+    const apparmorDest = join(
+      stagingDir,
+      'etc',
+      'apparmor.d',
+      linuxDebAppArmorProfileName
+    )
     writeFileSync(apparmorDest, getAppArmorProfileContent(), 'utf8')
     chmodSync(apparmorDest, 0o644)
 
@@ -443,8 +477,16 @@ export function buildLinuxDeb(
     chmodSync(controlDest, 0o644)
 
     const conffilesDest = join(stagingDir, 'DEBIAN', 'conffiles')
-    writeFileSync(conffilesDest, '/etc/apparmor.d/github-desktop\n', 'utf8')
+    writeFileSync(
+      conffilesDest,
+      `/etc/apparmor.d/${linuxDebAppArmorProfileName}\n`,
+      'utf8'
+    )
     chmodSync(conffilesDest, 0o644)
+
+    const preinstDest = join(stagingDir, 'DEBIAN', 'preinst')
+    writeFileSync(preinstDest, getPreinstScript(), 'utf8')
+    chmodSync(preinstDest, 0o755)
 
     const postinstDest = join(stagingDir, 'DEBIAN', 'postinst')
     writeFileSync(postinstDest, getPostinstScript(), 'utf8')
