@@ -255,6 +255,10 @@ describe('buildLinuxDeb', { skip: process.platform !== 'linux' }, () => {
     )
     assert.match(postinst, /apparmor_parser -r -T -W "\$APP_PROFILE"/)
     assert.match(postinst, /chmod 4755 "\$SANDBOX_BIN"/)
+    assert.match(
+      postinst,
+      /ln -sfn \/usr\/lib\/github-desktop\/resources\/app\/static\/github\.sh \/usr\/bin\/github-desktop/
+    )
     assert.match(postinst, /update-desktop-database/)
     assert.match(postinst, /gtk-update-icon-cache/)
 

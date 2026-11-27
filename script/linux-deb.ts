@@ -249,6 +249,8 @@ function getPostinstScript(): string {
     '      chmod 4755 "$SANDBOX_BIN" || true',
     '    fi',
     '',
+    '    ln -sfn /usr/lib/github-desktop/resources/app/static/github.sh /usr/bin/github-desktop',
+    '',
     ...getDesktopCacheRefreshLines(),
     '    ;;',
     'esac',
