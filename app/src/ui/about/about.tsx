@@ -19,10 +19,15 @@ import { isOSNoLongerSupportedByElectron } from '../../lib/get-os'
 import { AriaLiveContainer } from '../accessibility/aria-live-container'
 import { formatDate } from '../../lib/format-date'
 
-const logoPath = __DARWIN__
-  ? 'static/logo-64x64@2x.png'
-  : 'static/windows-logo-64x64@2x.png'
-const DesktopLogo = encodePathAsUrl(__dirname, logoPath)
+function getLogoPath(): string {
+  if (__DARWIN__) {
+    return 'static/logo-64x64@2x.png'
+  }
+  if (__LINUX__) {
+    return 'static/icon-logo.png'
+  }
+  return 'static/windows-logo-64x64@2x.png'
+}
 
 interface IAboutProps {
   /**
@@ -96,6 +101,10 @@ export class About extends React.Component<IAboutProps> {
   }
 
   private renderUpdateButton() {
+    if (__LINUX__) {
+      return null
+    }
+
     if (!this.canCheckForUpdates) {
       return null
     }
@@ -254,6 +263,7 @@ export class About extends React.Component<IAboutProps> {
 
     const versionText = __DEV__ ? `Build ${version}` : `Version ${version}`
     const titleId = 'Dialog_about'
+    const desktopLogo = encodePathAsUrl(__dirname, getLogoPath())
 
     return (
       <Dialog
@@ -266,7 +276,7 @@ export class About extends React.Component<IAboutProps> {
         <DialogContent>
           <Row className="logo">
             <img
-              src={DesktopLogo}
+              src={desktopLogo}
               alt="GitHub Desktop"
               width="64"
               height="64"

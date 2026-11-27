@@ -3,7 +3,6 @@
 
 import * as cp from 'child_process'
 import frontMatter from 'front-matter'
-import * as os from 'os'
 import * as path from 'path'
 import { getPrintenvzPath } from 'printenvz'
 import { getProxyCommandPath } from 'process-proxy'
@@ -23,17 +22,8 @@ export interface ILicense {
   readonly hidden: boolean
 }
 
-type DesktopPackageArch = 'arm64' | 'x64'
-type DesktopPackagePlatform = 'darwin' | 'linux' | 'win32'
-
 interface IDesktopPackagerModule {
   readonly packager: (options: object) => Promise<ReadonlyArray<string>>
-}
-
-interface IOSXNotarizeOptions {
-  readonly appleApiKey: string
-  readonly appleApiKeyId: string
-  readonly appleApiIssuer: string
 }
 
 import {
@@ -65,9 +55,9 @@ import {
 import { updateLicenseDump } from './licenses/update-license-dump'
 import { verifyInjectedSassVariables } from './validate-sass/validate-all'
 import { join } from 'path'
-import assert from 'assert'
 import { copyCopilotDependency } from './copilot'
 import { getNpmCommand } from './npm'
+import { getPackagerOptions, IOSXNotarizeOptions } from './packager-options'
 
 const isPublishableBuild = isPublishable()
 const isDevelopmentBuild = getChannel() === 'development'
@@ -147,37 +137,11 @@ async function packageApp() {
   const packagerModuleName = '@electron/packager'
   const { packager }: IDesktopPackagerModule = await import(packagerModuleName)
 
-  // not sure if this is needed anywhere, so I'm just going to inline it here
-  // for now and see what the future brings...
-  const toPackagePlatform = (
-    platform: NodeJS.Platform
-  ): DesktopPackagePlatform => {
-    if (platform === 'win32' || platform === 'darwin' || platform === 'linux') {
-      return platform
-    }
-    throw new Error(
-      `Unable to convert to platform for electron-packager: '${process.platform}`
-    )
-  }
-
-  const toPackageArch = (
-    targetArch: string | undefined
-  ): DesktopPackageArch => {
-    if (targetArch === undefined) {
-      targetArch = os.arch()
-    }
-
-    if (targetArch === 'arm64' || targetArch === 'x64') {
-      return targetArch
-    }
-
-    throw new Error(
-      `Building Desktop for architecture '${targetArch}' is not supported`
-    )
-  }
-
   // get notarization deets, unless we're not going to publish this
-  const osxNotarize = isPublishableBuild ? getNotarizationOptions() : undefined
+  const osxNotarize =
+    process.platform === 'darwin' && isPublishableBuild
+      ? getNotarizationOptions()
+      : undefined
 
   if (
     isPublishableBuild &&
@@ -191,80 +155,31 @@ async function packageApp() {
     )
   }
 
-  const iconPath = getIconDirectory()
-  const assetsCarPath = join(iconPath, 'Assets.car')
-  assert(
-    existsSync(assetsCarPath),
-    `Unable to find Assets.car at ${assetsCarPath}`
+  return packager(
+    getPackagerOptions({
+      platform: process.platform,
+      arch: process.env.TARGET_ARCH,
+      executableName: getExecutableName(),
+      distRoot: getDistRoot(),
+      outRoot,
+      iconDirectory: getIconDirectory(),
+      linuxIconPath: join(
+        projectRoot,
+        'app',
+        'static',
+        'linux',
+        'icon-logo.png'
+      ),
+      bundleId: getBundleID(),
+      companyName: getCompanyName(),
+      productName: getProductName(),
+      isDevelopmentBuild,
+      isPublishableBuild,
+      entitlementsPath,
+      extendInfoPath,
+      osxNotarize,
+    })
   )
-
-  return packager({
-    name: getExecutableName(),
-    platform: toPackagePlatform(process.platform),
-    arch: toPackageArch(process.env.TARGET_ARCH),
-    asar: false, // TODO: Probably wanna enable this down the road.
-    out: getDistRoot(),
-    // Packager probes for a sibling .icon file and requires macOS 26 to compile
-    // it. Use a distinct basename so older build hosts use the prebuilt ICNS.
-    icon: join(
-      iconPath,
-      process.platform === 'darwin' ? 'icon-logo-legacy.icns' : 'icon-logo'
-    ),
-    extraResource: [assetsCarPath],
-    dir: outRoot,
-    overwrite: true,
-    tmpdir: false,
-    derefSymlinks: true,
-    prune: false, // We'll prune them ourselves below.
-    ignore: [
-      new RegExp('/node_modules/electron($|/)'),
-      new RegExp('/node_modules/@electron/packager($|/)'),
-      new RegExp('/\\.git($|/)'),
-      new RegExp('/node_modules/\\.bin($|/)'),
-    ],
-    appCopyright: `Copyright © ${new Date().getFullYear()} GitHub, Inc.`,
-
-    // macOS
-    appBundleId: getBundleID(),
-    appCategoryType: 'public.app-category.developer-tools',
-    darwinDarkModeSupport: true,
-    osxSign: {
-      optionsForFile: (path: string) => ({
-        hardenedRuntime: true,
-        entitlements: entitlementsPath,
-      }),
-      type: isPublishableBuild ? 'distribution' : 'development',
-      // For development, we will use '-' as the identifier so that codesign
-      // will sign the app to run locally. We need to disable 'identity-validation'
-      // or otherwise it will replace '-' with one of the regular codesigning
-      // identities in our system.
-      identity: isDevelopmentBuild ? '-' : undefined,
-      identityValidation: !isDevelopmentBuild,
-    },
-    osxNotarize,
-    protocols: [
-      {
-        name: getBundleID(),
-        schemes: [
-          !isDevelopmentBuild
-            ? 'x-github-desktop-auth'
-            : 'x-github-desktop-dev-auth',
-          'x-github-client',
-          'github-mac',
-        ],
-      },
-    ],
-    extendInfo: extendInfoPath,
-
-    // Windows
-    win32metadata: {
-      CompanyName: getCompanyName(),
-      FileDescription: '',
-      OriginalFilename: '',
-      ProductName: getProductName(),
-      InternalName: getProductName(),
-    },
-  })
 }
 
 function removeAndCopy(source: string, destination: string) {

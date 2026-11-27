@@ -1,3 +1,5 @@
+import { homedir } from 'os'
+import { join } from 'path'
 import { pathExists } from '../path-exists'
 import { IFoundEditor } from './found-editor'
 
@@ -7,7 +9,18 @@ interface ILinuxExternalEditor {
   readonly name: string
 
   /** List of possible paths where the editor's executable might be located. */
-  readonly paths: string[]
+  readonly paths: readonly string[]
+}
+
+/**
+ * Optional dependencies for Linux external editor discovery.
+ *
+ * Exposed so unit tests can inject a deterministic home directory and path
+ * existence predicate without mutating global state.
+ */
+export interface ILinuxEditorLookupDependencies {
+  readonly homeDir?: string
+  readonly pathExists?: (path: string) => Promise<boolean>
 }
 
 /**
@@ -213,23 +226,48 @@ const editors: ILinuxExternalEditor[] = [
   },
 ]
 
-async function getAvailablePath(paths: string[]): Promise<string | null> {
+function resolveEditorPath(editorPath: string, homeDir: string): string {
+  if (editorPath.startsWith('~/')) {
+    return join(homeDir, editorPath.slice(2))
+  }
+
+  if (editorPath.startsWith('.local/')) {
+    return join(homeDir, editorPath)
+  }
+
+  return editorPath
+}
+
+async function getAvailablePath(
+  paths: readonly string[],
+  homeDir: string,
+  checkPathExists: (path: string) => Promise<boolean>
+): Promise<string | null> {
   for (const path of paths) {
-    if (await pathExists(path)) {
-      return path
+    const resolvedPath = resolveEditorPath(path, homeDir)
+    if (await checkPathExists(resolvedPath)) {
+      return resolvedPath
     }
   }
 
   return null
 }
 
-export async function getAvailableEditors(): Promise<
-  ReadonlyArray<IFoundEditor<string>>
-> {
+/**
+ * Discover installed external editors available on Linux.
+ *
+ * Resolves `~/` and `.local/` candidate paths against the user's home
+ * directory and returns the first existing path for each known editor.
+ */
+export async function getAvailableEditors(
+  deps?: ILinuxEditorLookupDependencies
+): Promise<ReadonlyArray<IFoundEditor<string>>> {
+  const homeDir = deps?.homeDir ?? homedir()
+  const checkPathExists = deps?.pathExists ?? pathExists
   const results: Array<IFoundEditor<string>> = []
 
   for (const editor of editors) {
-    const path = await getAvailablePath(editor.paths)
+    const path = await getAvailablePath(editor.paths, homeDir, checkPathExists)
     if (path) {
       results.push({ editor: editor.name, path })
     }
